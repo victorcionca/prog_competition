@@ -12,11 +12,11 @@
 #endif
 
 // The landscape matrix
-int landscape_width, landscape_height;
-float **matrix;
-int queries_made = 0;
-path_point user_path[1000];  // Array to store the path taken by the user
-path_point landscape_peak;
+static int landscape_width, landscape_height;
+static float **matrix;
+static int queries_made = 0;
+static path_point user_path[1000];  // Array to store the path taken by the user
+static path_point landscape_peak;
 
 
 #define MIN_WIDTH   100
@@ -337,6 +337,7 @@ int main(){
     int res;
     int i;
 
+    alarm(60); // Interrupt the program after 60 seconds to prevent inf loop
     configure_seccomp();
 
     res = performance_eval();
