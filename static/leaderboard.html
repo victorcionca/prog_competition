@@ -1,0 +1,13 @@
+<html>
+    <head>Leaderboard</head>
+    <body>
+        <table>
+            <tr><td>Name</td><td>Score</td></tr>
+            {{range $idx, $user := .Users}}
+            <tr><td>{{ $idx }}<td>{{$user.Name}}</td><td>{{$user.Score}}</td></tr>
+            {{end}}
+        </table>
+        <br>
+        <a href="/static/dashboard.html">Back to dashboard</a>
+    </body>
+</html>

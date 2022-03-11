@@ -1,0 +1,23 @@
+<html>
+    <head>Welcome {{ .Username }}</head>
+    <body>
+        <h2>Current best score: {{ .Score }}</h2><br>
+        <h2>Submit and test solution</h2><br>
+        Before submitting make sure that your solution runs correctly with the performance_eval function.<br><br>
+        <form action="/upload" method="POST" enctype="multipart/form-data">
+            Upload solution file (gradient_sol.c)
+            <input type="file" name="solution">
+            <input type="submit" value="Upload">
+        </form>
+        <br>
+        <form action="/compile" method="POST">
+            Compile existing solution <input type="submit" value="Compile">
+        </form>
+        <br>
+        <form action="/run" method="POST">
+            Run existing solution <input type="submit" value="Run">
+        </form>
+        <br>
+        <a href="/static/dashboard.html">Back to dashboard</a>
+    </body>
+</html>
