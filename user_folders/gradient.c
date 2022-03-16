@@ -319,6 +319,10 @@ struct eval_result performance_eval(){
     res.num_failures = ((float)failures)/PERF_RATIO;
     res.worst_success = worst_success;
 
+    if (res.avg_success == 0 || res.worst_success == 0){
+        res.avg_success = 999;
+        res.worst_success = 999;
+    }
     return res;
 }
 
