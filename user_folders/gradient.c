@@ -18,6 +18,11 @@ static int queries_made = 0;
 static path_point user_path[1000];  // Array to store the path taken by the user
 static path_point landscape_peak;
 
+struct eval_result{
+    float avg_success;
+    int num_failures;
+    int worst_success;
+};
 
 #define MIN_WIDTH   100
 
@@ -276,31 +281,42 @@ int single_run(int seed){
         return landscape_width*landscape_height;
 }
 
-float performance_eval(){
+struct eval_result performance_eval(){
     int i;
-    int results[100];
-    float sum = 0;
+    //int results[1000];
+    float success_sum = 0;
+    int success_num = 0;
+    int worst_success = 0;
+    int failures = 0;
     path_point p;
+    struct eval_result res;
 
     // Initialise PRNG for current time
-    //srandom(time(NULL));
+    srandom(time(NULL));
 
-    for (i=0;i<100;i++){
-        srandom(i);
+    for (i=0;i<1000;i++){
+        //srandom(i);
         queries_made = 0;
         generate_landscape(-1);
         p = find_highest_point();
         if (p.x != landscape_peak.x || p.y != landscape_peak.y){
-            queries_made = landscape_width*landscape_height;
+            //queries_made = landscape_width*landscape_height;
+            failures ++;
+        }else{
+            success_sum += queries_made;
+            success_num ++;
+            if (queries_made > worst_success) worst_success = queries_made;
         }
-        results[i] = queries_made;
-        sum += results[i];
         free_landscape();
         //printf("Attempt %d peak at %d-%d, found in %d tries\n",
         //        i, landscape_peak.y, landscape_peak.x, queries_made);
     }
 
-    return sum/100;
+    res.avg_success = success_sum/success_num;
+    res.num_failures = failures;
+    res.worst_success = worst_success;
+
+    return res;
 }
 
 void configure_seccomp() {
@@ -334,7 +350,7 @@ void configure_seccomp() {
 }
 
 int main(){
-    int res;
+    struct eval_result res;
     int i;
 
     alarm(60); // Interrupt the program after 60 seconds to prevent inf loop
@@ -347,7 +363,7 @@ int main(){
     //    printf("%d-%d ", user_path[i].y, user_path[i].x);
     //printf("\n");
     //printf("Peak at %d-%d\n", landscape_peak.y, landscape_peak.x);
-    printf("%d\n", res);
+    printf("%0.2f,%d,%d\n", res.avg_success, res.worst_success, res.num_failures);
 
     return 0;
 }
