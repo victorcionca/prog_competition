@@ -313,7 +313,7 @@ func GetUser(email string) (UserRecord, error) {
 }
 
 // Get all the user records from the DB
-func GetUserRecords(onlyValid bool) ([]UserRecord, error) {
+func GetUserRecords(onlyValid bool, validScore bool) ([]UserRecord, error) {
     rows, err := userDb.Query("SELECT * FROM users")
     if err != nil {
         return nil, err
@@ -332,7 +332,7 @@ func GetUserRecords(onlyValid bool) ([]UserRecord, error) {
             return nil, err
         }
         record.Score = CalculateScore(record.DetailedScore)
-        if onlyValid && record.Verified == 1 && record.Score > 0 {
+        if onlyValid && record.Verified == 1 && (!validScore || record.Score > 0) {
             records = append(records, record)
         }
     }
@@ -354,8 +354,8 @@ func HandleLeaderboard(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Read the user records from the DB
-    userRecords, err := GetUserRecords(true)
+    // Read the user records from the DB with valid scores
+    userRecords, err := GetUserRecords(true, true)
     if err != nil {
         http.ServeFile(w, r, "static/index.html")
     }
@@ -765,6 +765,25 @@ func HandleRun(w http.ResponseWriter, r *http.Request) {
     return
 }
 
+func UpdateScores() {
+    // Read the user records from the DB
+    userRecords, err := GetUserRecords(true, false)
+    if err != nil {
+        log.Fatal("Error retrieving user records: "+err.Error())
+    }
+
+    for _, user := range userRecords {
+        _, newscore, result := RunSolution(user.Id)
+        if result >= 0 {
+            log.Printf("Updating score of %s to %v", user.Name, newscore)
+            err = UpdateScore(user.Id, newscore)
+            if err != nil {
+                log.Println("Did not work:"+err.Error())
+            }
+        }
+    }
+}
+
 func main(){
     // Initialise PRNG
     rand.Seed(1) // TODO use time.Now().UnixNano() as seed
@@ -775,6 +794,15 @@ func main(){
     if  err != nil {
         log.Fatal(err)
     }
+
+    cmdArgs := os.Args
+    if len(cmdArgs) > 1 && cmdArgs[1] == "update"{
+        log.Println("Update DB")
+        UpdateScores()
+        return
+    }
+
+    log.Println("Starting server")
 
     // Create the router
     rt := mux.NewRouter()
