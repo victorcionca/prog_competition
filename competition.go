@@ -43,7 +43,7 @@ var session_store = sessions.NewCookieStore([]byte(os.Getenv("SESSION_KEY")))
 type SolutionScore struct {
     AvgSuccess float32
     WorstSuccess float32
-    NumFailures int
+    FailureRatio float32
 }
 
 type UserRecord struct {
@@ -66,7 +66,7 @@ func CalculateScore(score SolutionScore) float32 {
     if score.AvgSuccess == -1 {
         return -1
     }
-    return score.AvgSuccess + float32(score.NumFailures)*score.WorstSuccess
+    return score.AvgSuccess + score.FailureRatio*score.WorstSuccess
 }
 
 func GetUserFolder(userid string) string {
@@ -159,7 +159,8 @@ func RunSolution(userid string) (string, SolutionScore, int) {
         score.AvgSuccess = float32(tmp)
         tmp, _ = strconv.ParseFloat(fields[1], 32)
         score.WorstSuccess = float32(tmp)
-        score.NumFailures, _ = strconv.Atoi(fields[2])
+        tmp, _ = strconv.ParseFloat(fields[2], 32)
+        score.FailureRatio = float32(tmp)
         log.Printf("No error")
     }else{
         // Must extract the error code
@@ -257,12 +258,12 @@ func ValidateUser(id string) error {
 }
 
 func UpdateScore(userid string, score SolutionScore) error {
-    updateScoreSQL := "UPDATE users SET score = ?, avgsuccess = ?, worstsuccess =? WHERE id = ?";
+    updateScoreSQL := "UPDATE users SET failureratio = ?, avgsuccess = ?, worstsuccess =? WHERE id = ?";
     statement, err := userDb.Prepare(updateScoreSQL)
     if err != nil {
         return err
     }
-    _, err = statement.Exec(score.NumFailures, score.AvgSuccess, score.WorstSuccess, userid)
+    _, err = statement.Exec(score.FailureRatio, score.AvgSuccess, score.WorstSuccess, userid)
     return err
 }
 
@@ -286,6 +287,7 @@ func HaveUserCollision(user UserRecord) (bool, error) {
 // user doesn't exist.
 func GetUser(email string) (UserRecord, error) {
     var user UserRecord
+    var tmp int
     user.Email = ""
     getUserSQL := "SELECT * FROM users where email == ?"
     statement, err := userDb.Prepare(getUserSQL)
@@ -294,18 +296,18 @@ func GetUser(email string) (UserRecord, error) {
     }
     row := statement.QueryRow(email)
     err = row.Scan(&user.Email, &user.Salt, &user.Password, &user.Name, &user.Id,
-                   &user.DetailedScore.NumFailures, &user.Verified,
-                   &user.DetailedScore.AvgSuccess, &user.DetailedScore.WorstSuccess)
+                   &tmp, &user.Verified, &user.DetailedScore.AvgSuccess,
+                   &user.DetailedScore.WorstSuccess, &user.DetailedScore.FailureRatio)
     if err != nil {
         return user, err
     }else{
         // Calculate the score
         user.Score = CalculateScore(user.DetailedScore)
-        log.Printf("User score=%0.2f: avg=%0.2f, worst=%0.2f, failures=%d",
+        log.Printf("User score=%0.2f: avg=%0.2f, worst=%0.2f, failures=%0.2f",
                     user.Score,
                     user.DetailedScore.AvgSuccess,
                     user.DetailedScore.WorstSuccess,
-                    user.DetailedScore.NumFailures)
+                    user.DetailedScore.FailureRatio)
         return user, nil
     }
 }
@@ -321,9 +323,11 @@ func GetUserRecords(onlyValid bool) ([]UserRecord, error) {
     var records []UserRecord
     for rows.Next() {
         var record UserRecord
+        var tmp int
         err := rows.Scan(&record.Email, &record.Salt, &record.Password, &record.Name,
-                         &record.Id, &record.DetailedScore.NumFailures, &record.Verified,
-                         &record.DetailedScore.AvgSuccess, &record.DetailedScore.WorstSuccess)
+                         &record.Id, &tmp, &record.Verified,
+                         &record.DetailedScore.AvgSuccess, &record.DetailedScore.WorstSuccess,
+                         &record.DetailedScore.FailureRatio)
         if err != nil {
             return nil, err
         }
@@ -443,9 +447,6 @@ func HandleLogin(w http.ResponseWriter, r *http.Request){
     session.Values["username"] = userRecord.Name
     session.Values["email"] = userRecord.Email
     session.Values["score"] = userRecord.Score
-    session.Values["avgsuccess"] = userRecord.DetailedScore.AvgSuccess
-    session.Values["worstsuccess"] = userRecord.DetailedScore.WorstSuccess
-    session.Values["failures"] = userRecord.DetailedScore.NumFailures
     err = session.Save(r, w)
     if err != nil {
         data := map[string]interface{}{
@@ -752,9 +753,6 @@ func HandleRun(w http.ResponseWriter, r *http.Request) {
             return
         }
         session.Values["score"] = new_score
-        session.Values["avgsuccess"] = score.AvgSuccess
-        session.Values["worstsuccess"] = score.WorstSuccess
-        session.Values["failures"] = score.NumFailures
         session.Save(r, w)
         run_result += "\nBest score updated."
     }

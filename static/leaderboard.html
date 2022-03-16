@@ -1,13 +1,15 @@
 <html>
-    <head>Leaderboard</head>
     <body>
+        <h1>Leaderboard</h1>
+        <br>
+        Calculated score = avg successful + worst successful x failure ratio<br><br>
         <table>
             <tr>
                 <td style="background-color:#dddddd">Index</td>
                 <td style="background-color:#cccccc">Name</td>
                 <td style="background-color:#dddddd">Avg calls (successful)</td>
                 <td style="background-color:#cccccc">Worst successful result</td>
-                <td style="background-color:#dddddd">Failures</td>
+                <td style="background-color:#dddddd">Failure ratio</td>
                 <td style="background-color:#cccccc">Caculated Score</td></tr>
             {{range $idx, $user := .Users}}
             <tr>
@@ -15,7 +17,7 @@
                 <td style="background-color:#cccccc">{{$user.Name}}</td>
                 <td style="background-color:#dddddd">{{$user.DetailedScore.AvgSuccess}}</td>
                 <td style="background-color:#cccccc">{{$user.DetailedScore.WorstSuccess}}</td>
-                <td style="background-color:#dddddd">{{$user.DetailedScore.NumFailures}}</td>
+                <td style="background-color:#dddddd">{{$user.DetailedScore.FailureRatio}}</td>
                 <td style="background-color:#cccccc">{{$user.Score}}</td>
             </tr>
             {{end}}
