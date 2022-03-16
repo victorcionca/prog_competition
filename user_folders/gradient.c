@@ -20,11 +20,14 @@ static path_point landscape_peak;
 
 struct eval_result{
     float avg_success;
-    int num_failures;
+    float num_failures;
     int worst_success;
 };
 
-#define MIN_WIDTH   100
+#define MIN_WIDTH   200
+#define MIN_PEAK_HEIGHT     300
+#define PERF_ITERS  1000
+#define PERF_RATIO  10
 
 /**
  * Add a peak centered on position x, y with given height.
@@ -169,12 +172,12 @@ void generate_landscape(int seed){
     add_peak(matrix, landscape_height, landscape_width,
             random()%landscape_width, // peak x position
             random()%landscape_height, // peak y position
-            400); // peak height
+            MIN_PEAK_HEIGHT+(random()%MIN_PEAK_HEIGHT)); // peak height
 
     // Add noise as plateaus
     add_noise(matrix, landscape_height, landscape_width,
-            20, // Number of plateaus to deploy
-            10);// Max radius of plateau
+            40, // Number of plateaus to deploy
+            15);// Max radius of plateau
 
 }
 
@@ -294,7 +297,7 @@ struct eval_result performance_eval(){
     // Initialise PRNG for current time
     srandom(time(NULL));
 
-    for (i=0;i<1000;i++){
+    for (i=0;i<PERF_ITERS;i++){
         //srandom(i);
         queries_made = 0;
         generate_landscape(-1);
@@ -313,7 +316,7 @@ struct eval_result performance_eval(){
     }
 
     res.avg_success = success_sum/success_num;
-    res.num_failures = failures;
+    res.num_failures = ((float)failures)/PERF_RATIO;
     res.worst_success = worst_success;
 
     return res;
@@ -363,7 +366,7 @@ int main(){
     //    printf("%d-%d ", user_path[i].y, user_path[i].x);
     //printf("\n");
     //printf("Peak at %d-%d\n", landscape_peak.y, landscape_peak.x);
-    printf("%0.2f,%d,%d\n", res.avg_success, res.worst_success, res.num_failures);
+    printf("%0.2f,%d,%0.2f\n", res.avg_success, res.worst_success, res.num_failures);
 
     return 0;
 }
