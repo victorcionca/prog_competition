@@ -40,19 +40,33 @@ const (
 var userDb *sql.DB
 var session_store = sessions.NewCookieStore([]byte(os.Getenv("SESSION_KEY")))
 
+type SolutionScore struct {
+    AvgSuccess float32
+    WorstSuccess float32
+    NumFailures int
+}
+
 type UserRecord struct {
     Email string
     Salt []byte
     Password string
     Name string
     Id string
-    Score int
+    DetailedScore SolutionScore
+    Score float32
     Verified int
 }
 
 type LeaderBoardData struct {
     Title string
     Users []UserRecord
+}
+
+func CalculateScore(score SolutionScore) float32 {
+    if score.AvgSuccess == -1 {
+        return -1
+    }
+    return score.AvgSuccess + float32(score.NumFailures)*score.WorstSuccess
 }
 
 func GetUserFolder(userid string) string {
@@ -120,11 +134,12 @@ func TryCompile(userid string) (string, error) {
 }
 
 // Runs a solution and returns a run message (e.g. SEGFAULT), obtained score
-func RunSolution(userid string) (string, int) {
+// Score is represented as avg_success, worst_success, num_failures
+func RunSolution(userid string) (string, SolutionScore, int) {
     // Change directory into the users folder
     var err error
     var out []byte
-    score := -1
+    var score SolutionScore
     wdir, _ := os.Getwd()
     _ = os.Chdir(GetUserFolder(userid))
     defer os.Chdir(wdir)
@@ -132,14 +147,19 @@ func RunSolution(userid string) (string, int) {
     // Check that binary exists
     tmpwdir, _ := os.Getwd()
     if _, err := os.Stat(tmpwdir + "/gradient"); errors.Is(err, os.ErrNotExist) {
-        return "Solution hasn't been compiled yet!", score
+        return "Solution hasn't been compiled yet!", score, -1
     }
 
     //  Run solution, capturing the output
     out, err = exec.Command("./gradient").CombinedOutput()
     log.Println("Result: "+string(out))
     if err == nil {
-        score, _ = strconv.Atoi(strings.TrimSpace(string(out)))
+        fields := strings.Split(strings.TrimSpace(string(out)), ",")
+        tmp, _ := strconv.ParseFloat(fields[0], 32)
+        score.AvgSuccess = float32(tmp)
+        tmp, _ = strconv.ParseFloat(fields[1], 32)
+        score.WorstSuccess = float32(tmp)
+        score.NumFailures, _ = strconv.Atoi(fields[2])
         log.Printf("No error")
     }else{
         // Must extract the error code
@@ -147,8 +167,9 @@ func RunSolution(userid string) (string, int) {
         log.Printf("%v", exitCode)
     }
 
-    return string(out), score
+    return string(out), score, 0
 }
+
 
 // Hashes the string
 // A salt of saltlength can be added to the hash.
@@ -216,12 +237,12 @@ func SendVerificationMail(user UserRecord) error {
 // Database functions
 
 func AddUser(user UserRecord) error {
-    addUserSQL := "INSERT INTO users(email, salt, password, name, id, score, verified) VALUES (?, ?, ?, ?, ?, ?, 0)"
+    addUserSQL := "INSERT INTO users(email, salt, password, name, id, score, avgsuccess, worstsuccess, verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)"
     statement, err := userDb.Prepare(addUserSQL)
     if err != nil {
         return err
     }
-    _, err = statement.Exec(user.Email, user.Salt, user.Password, user.Name, user.Id, -1)
+    _, err = statement.Exec(user.Email, user.Salt, user.Password, user.Name, user.Id, -1, -1, -1)
     return err
 }
 
@@ -235,13 +256,13 @@ func ValidateUser(id string) error {
     return err
 }
 
-func UpdateScore(userid string, score int) error {
-    updateScoreSQL := "UPDATE users SET score = ? WHERE id = ?";
+func UpdateScore(userid string, score SolutionScore) error {
+    updateScoreSQL := "UPDATE users SET score = ?, avgsuccess = ?, worstsuccess =? WHERE id = ?";
     statement, err := userDb.Prepare(updateScoreSQL)
     if err != nil {
         return err
     }
-    _, err = statement.Exec(score, userid)
+    _, err = statement.Exec(score.NumFailures, score.AvgSuccess, score.WorstSuccess, userid)
     return err
 }
 
@@ -272,10 +293,19 @@ func GetUser(email string) (UserRecord, error) {
         return user, nil
     }
     row := statement.QueryRow(email)
-    err = row.Scan(&user.Email, &user.Salt, &user.Password, &user.Name, &user.Id, &user.Score, &user.Verified)
+    err = row.Scan(&user.Email, &user.Salt, &user.Password, &user.Name, &user.Id,
+                   &user.DetailedScore.NumFailures, &user.Verified,
+                   &user.DetailedScore.AvgSuccess, &user.DetailedScore.WorstSuccess)
     if err != nil {
         return user, err
     }else{
+        // Calculate the score
+        user.Score = CalculateScore(user.DetailedScore)
+        log.Printf("User score=%0.2f: avg=%0.2f, worst=%0.2f, failures=%d",
+                    user.Score,
+                    user.DetailedScore.AvgSuccess,
+                    user.DetailedScore.WorstSuccess,
+                    user.DetailedScore.NumFailures)
         return user, nil
     }
 }
@@ -291,10 +321,13 @@ func GetUserRecords(onlyValid bool) ([]UserRecord, error) {
     var records []UserRecord
     for rows.Next() {
         var record UserRecord
-        err := rows.Scan(&record.Email, &record.Salt, &record.Password, &record.Name, &record.Id, &record.Score, &record.Verified)
+        err := rows.Scan(&record.Email, &record.Salt, &record.Password, &record.Name,
+                         &record.Id, &record.DetailedScore.NumFailures, &record.Verified,
+                         &record.DetailedScore.AvgSuccess, &record.DetailedScore.WorstSuccess)
         if err != nil {
             return nil, err
         }
+        record.Score = CalculateScore(record.DetailedScore)
         if onlyValid && record.Verified == 1 && record.Score > 0 {
             records = append(records, record)
         }
@@ -410,6 +443,9 @@ func HandleLogin(w http.ResponseWriter, r *http.Request){
     session.Values["username"] = userRecord.Name
     session.Values["email"] = userRecord.Email
     session.Values["score"] = userRecord.Score
+    session.Values["avgsuccess"] = userRecord.DetailedScore.AvgSuccess
+    session.Values["worstsuccess"] = userRecord.DetailedScore.WorstSuccess
+    session.Values["failures"] = userRecord.DetailedScore.NumFailures
     err = session.Save(r, w)
     if err != nil {
         data := map[string]interface{}{
@@ -693,16 +729,18 @@ func HandleRun(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    run_result, score := RunSolution(session.Values["userid"].(string))
-    if score == -1 { // Run was interrupted by a signal
+    run_result, score, result := RunSolution(session.Values["userid"].(string))
+    if result == -1 { // Run was interrupted by a signal
         run_result = "Did not finish correctly"
     }else{
-        run_result = "Finished with score: "+strconv.Itoa(score)
+        run_result = "Score (avg success, worst success, failures): "+run_result
+        log.Println(run_result, score)
     }
 
     // If the score is an improvement, update it
-    crt_score := session.Values["score"].(int)
-    if score > 0 && (score < crt_score || crt_score < 0) {
+    crt_score := session.Values["score"].(float32)
+    new_score := CalculateScore(score)
+    if new_score > 0 && (new_score < crt_score || crt_score < 0) {
         err := UpdateScore(session.Values["userid"].(string), score)
         if err != nil {
             data := map[string]interface{}{
@@ -713,7 +751,10 @@ func HandleRun(w http.ResponseWriter, r *http.Request) {
             errTemplate.Execute(w, data)
             return
         }
-        session.Values["score"] = score
+        session.Values["score"] = new_score
+        session.Values["avgsuccess"] = score.AvgSuccess
+        session.Values["worstsuccess"] = score.WorstSuccess
+        session.Values["failures"] = score.NumFailures
         session.Save(r, w)
         run_result += "\nBest score updated."
     }
