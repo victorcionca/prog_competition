@@ -5,4 +5,5 @@ create table users(
     name text,
     id text,
     score int,
-    verified int);
+    verified int,
+    medsuccess int);
