@@ -22,29 +22,98 @@ import (
     "database/sql"
     _ "github.com/mattn/go-sqlite3"
     "golang.org/x/crypto/bcrypt"
-    "github.com/sendgrid/sendgrid-go"
-    "github.com/sendgrid/sendgrid-go/helpers/mail"
+    postmark "github.com/mattevans/postmark-go"
 )
 
+// ----------------------------------------------------------------------------
+// The following should be configured for the competition details
 const (
     userDbFile = "userdb.db"
     leaderboardTemplate = "static/leaderboard.html"
-    webaddress = "http://localhost:8080"
+    webaddress = "http://127.0.0.1:8080"
     emailTemplate = `Dear {{ .Name }},
         Thank you for registering for the C Programming competition.
         To activate your account follow the link below:
         {{ .Link }}`
     user_folders = "user_folders"
+    user_sol_file = "move_ship.c"
+    competitionBinary = "asteroids"
 )
+
+func getCompetitionFilenames() []string {
+    return []string{"asteroids.c", "asteroids.h"}
+}
+
+func getCompiledCommand() *exec.Cmd {
+    return exec.Command("gcc", "asteroids.c", "move_ship.c", "-o", "asteroids")
+}
+
+
+type SolutionScore struct {
+    MedSuccess int
+}
+
+func CalculateScore(score SolutionScore) float32 {
+    return float32(score.MedSuccess)
+}
+
+// Specific to competition binary
+// Processes the output of the binary to extract the score.
+// Also returns the result (-1 on error) and an error message.
+func processSolutionOutput(solOut []byte) (string,SolutionScore,int) {
+    var score SolutionScore
+    outString := string(solOut)
+    result := -1
+    fields := strings.Split(strings.TrimSpace(outString), ",")
+    if len(fields) == 2 {
+        status := fields[0]
+        if strings.Compare(status, "Success") == 0 || strings.Compare(status, "Infloop") == 0{
+            tmp, _ := strconv.ParseInt(fields[1], 10, 0)
+            score.MedSuccess = int(tmp)
+            return "success", score, 0
+        }else if strings.Compare(status, "Error") == 0{
+            return "error: "+fields[1], score, -1
+        }
+    }
+    return outString,score,result
+}
+
+// Specific to the competition binary
+// Runs the solution and returns
+//  - a message that will be displayed to the user
+//  - a score
+//  - a result code, -1 indicates error.
+func RunSolutionSpecific() (string, SolutionScore, int) {
+    // Specific for asteroids
+    // Run the binary 10 times with increasing seeds, average the scores
+    scores := make([]int, 10)
+    for i := 0; i < 10; i++ {
+        out, err := exec.Command("./"+competitionBinary, string(1234+i)).CombinedOutput()
+        //log.Println("Result: "+string(out))
+        if err == nil {
+            runOut,runScore,runResult := processSolutionOutput(out)
+            if runResult == -1 {
+                return runOut, runScore, runResult
+            }else{
+                scores[i] = runScore.MedSuccess
+            }
+        }else{
+            return "error: "+string(out), SolutionScore{MedSuccess:0}, -1
+        }
+    }
+
+    // Determine the median score
+    sort.Ints(scores)
+    var solScore SolutionScore
+    solScore.MedSuccess = scores[5]
+    return "success", solScore, 0
+}
+
+
+// ----------------------------------------------------------------------------
 
 var userDb *sql.DB
 var session_store = sessions.NewCookieStore([]byte(os.Getenv("SESSION_KEY")))
-
-type SolutionScore struct {
-    AvgSuccess float32
-    WorstSuccess float32
-    FailureRatio float32
-}
 
 type UserRecord struct {
     Email string
@@ -62,19 +131,12 @@ type LeaderBoardData struct {
     Users []UserRecord
 }
 
-func CalculateScore(score SolutionScore) float32 {
-    if score.AvgSuccess == -1 {
-        return -1
-    }
-    return score.AvgSuccess + score.FailureRatio*score.WorstSuccess
-}
-
 func GetUserFolder(userid string) string {
     return user_folders+"/user_"+userid[:20]
 }
 
 func GetUserSolutionFile(userid string) string {
-    return GetUserFolder(userid)+"/gradient_sol.c"
+    return GetUserFolder(userid)+"/"+user_sol_file
 }
 
 func PrepareUserFolder(userid string) error {
@@ -85,13 +147,25 @@ func PrepareUserFolder(userid string) error {
         return err
     }
     // Copy in the folder the template files
-    cmd := exec.Command("cp", user_folders+"/gradient.c", userfolder+"/")
-    if err = cmd.Run(); err != nil {
-        return err
+    for _, filename := range getCompetitionFilenames() {
+        cmd := exec.Command("cp", user_folders+"/"+filename, userfolder+"/")
+        if err = cmd.Run(); err != nil {
+            return err
+        }
     }
-    cmd = exec.Command("cp", user_folders+"/gradient.h", userfolder+"/")
-    if err = cmd.Run(); err != nil {
-        return err
+
+    return nil
+}
+
+func CopySourcesToUserFolder(userid string) error {
+    var err error
+    userfolder := GetUserFolder(userid)
+    // Copy in the folder the template files
+    for _, filename := range getCompetitionFilenames() {
+        cmd := exec.Command("cp", user_folders+"/"+filename, userfolder+"/")
+        if err = cmd.Run(); err != nil {
+            return err
+        }
     }
 
     return nil
@@ -125,7 +199,8 @@ func TryCompile(userid string) (string, error) {
 
     //  Run gcc, capturing the output
     defer os.Chdir(wdir)
-    out, err = exec.Command("gcc", "gradient.c", "gradient_sol.c", "-lm", "-ogradient").CombinedOutput()
+    compileCommand := getCompiledCommand()
+    out, err = compileCommand.CombinedOutput()
     if err != nil {
         return string(out), err
     }
@@ -134,41 +209,21 @@ func TryCompile(userid string) (string, error) {
 }
 
 // Runs a solution and returns a run message (e.g. SEGFAULT), obtained score
-// Score is represented as avg_success, worst_success, num_failures
 func RunSolution(userid string) (string, SolutionScore, int) {
     // Change directory into the users folder
-    var err error
-    var out []byte
-    var score SolutionScore
     wdir, _ := os.Getwd()
     _ = os.Chdir(GetUserFolder(userid))
     defer os.Chdir(wdir)
 
     // Check that binary exists
     tmpwdir, _ := os.Getwd()
-    if _, err := os.Stat(tmpwdir + "/gradient"); errors.Is(err, os.ErrNotExist) {
-        return "Solution hasn't been compiled yet!", score, -1
+    if _, err := os.Stat(tmpwdir + "/"+competitionBinary); errors.Is(err, os.ErrNotExist) {
+        return "Solution hasn't been compiled yet!", SolutionScore{MedSuccess:0}, -1
     }
 
-    //  Run solution, capturing the output
-    out, err = exec.Command("./gradient").CombinedOutput()
-    log.Println("Result: "+string(out))
-    if err == nil {
-        fields := strings.Split(strings.TrimSpace(string(out)), ",")
-        tmp, _ := strconv.ParseFloat(fields[0], 32)
-        score.AvgSuccess = float32(tmp)
-        tmp, _ = strconv.ParseFloat(fields[1], 32)
-        score.WorstSuccess = float32(tmp)
-        tmp, _ = strconv.ParseFloat(fields[2], 32)
-        score.FailureRatio = float32(tmp)
-        log.Printf("No error")
-    }else{
-        // Must extract the error code
-        exitCode := err.(*exec.ExitError).ExitCode()
-        log.Printf("%v", exitCode)
-    }
-
-    return string(out), score, 0
+    //  Run solution specific to competition
+    solOut, score, result := RunSolutionSpecific()
+    return solOut, score, result
 }
 
 
@@ -210,9 +265,7 @@ func VerifyPassword(password string, salt []byte, hashed string) bool {
 
 // Send a verification email to the user
 func SendVerificationMail(user UserRecord) error {
-    from := mail.NewEmail("SOFT7019", "victor.cionca@mtu.ie")
-    to := mail.NewEmail(user.Name, user.Email)
-    subject := "SOFT7019 A1 Competition: verify account"
+    subject := "SOFT7019 Competition: verify account"
     // Generate email text
     t := text_template.Must(text_template.New("email").Parse(emailTemplate))
     buf := &bytes.Buffer{}
@@ -224,26 +277,34 @@ func SendVerificationMail(user UserRecord) error {
         return err
     }
     plainTextContent := buf.String()
-    message := mail.NewSingleEmail(from, subject, to, plainTextContent, "")
-    client := sendgrid.NewSendClient(os.Getenv("SENDGRID_API_KEY"))
-    _, err := client.Send(message)
+    emailReq := &postmark.Email{
+        From:       "victor.cionca@mtu.ie",
+        To:         user.Email,
+        Subject:    subject,
+        TextBody:   plainTextContent,
+    }
+    auth := &http.Client{Transport: &postmark.AuthTransport{
+                        Token: os.Getenv("POSTMARK_SERVER_API_TOKEN")}}
+    client := postmark.NewClient(auth)
+    _, _, err := client.Email.Send(emailReq)
     if err != nil {
         return err
     }
-    log.Println("Sent verification email to ", user.Name)
+    //log.Println("Sent verification email to ", user.Name)
     return nil
 }
 
 /* --------------------------------------------------------------------------- */
 // Database functions
+// TODO: modify DB info for user score
 
 func AddUser(user UserRecord) error {
-    addUserSQL := "INSERT INTO users(email, salt, password, name, id, score, avgsuccess, worstsuccess, verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)"
+    addUserSQL := "INSERT INTO users(email, salt, password, name, id, score, verified, medsuccess) VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
     statement, err := userDb.Prepare(addUserSQL)
     if err != nil {
         return err
     }
-    _, err = statement.Exec(user.Email, user.Salt, user.Password, user.Name, user.Id, -1, -1, -1)
+    _, err = statement.Exec(user.Email, user.Salt, user.Password, user.Name, user.Id, -1, -1)
     return err
 }
 
@@ -258,13 +319,25 @@ func ValidateUser(id string) error {
 }
 
 func UpdateScore(userid string, score SolutionScore) error {
-    updateScoreSQL := "UPDATE users SET failureratio = ?, avgsuccess = ?, worstsuccess =? WHERE id = ?";
+    updateScoreSQL := "UPDATE users SET medsuccess =? WHERE id = ?";
     statement, err := userDb.Prepare(updateScoreSQL)
     if err != nil {
         return err
     }
-    _, err = statement.Exec(score.FailureRatio, score.AvgSuccess, score.WorstSuccess, userid)
+    _, err = statement.Exec(score.MedSuccess, userid)
     return err
+}
+
+func GetScore(userid string) (SolutionScore, error) {
+    var score SolutionScore
+    getScoreSQL := "SELECT medsuccess from users WHERE id = ?";
+    statement, err := userDb.Prepare(getScoreSQL)
+    if err != nil {
+        return score, nil
+    }
+    row := statement.QueryRow(userid)
+    err = row.Scan(&score.MedSuccess)
+    return score, err
 }
 
 // Checks that the email and username don't already exist in the database
@@ -296,18 +369,12 @@ func GetUser(email string) (UserRecord, error) {
     }
     row := statement.QueryRow(email)
     err = row.Scan(&user.Email, &user.Salt, &user.Password, &user.Name, &user.Id,
-                   &tmp, &user.Verified, &user.DetailedScore.AvgSuccess,
-                   &user.DetailedScore.WorstSuccess, &user.DetailedScore.FailureRatio)
+                   &tmp, &user.Verified, &user.DetailedScore.MedSuccess)
     if err != nil {
         return user, err
     }else{
         // Calculate the score
         user.Score = CalculateScore(user.DetailedScore)
-        log.Printf("User score=%0.2f: avg=%0.2f, worst=%0.2f, failures=%0.2f",
-                    user.Score,
-                    user.DetailedScore.AvgSuccess,
-                    user.DetailedScore.WorstSuccess,
-                    user.DetailedScore.FailureRatio)
         return user, nil
     }
 }
@@ -326,8 +393,7 @@ func GetUserRecords(onlyValid bool, validScore bool) ([]UserRecord, error) {
         var tmp int
         err := rows.Scan(&record.Email, &record.Salt, &record.Password, &record.Name,
                          &record.Id, &tmp, &record.Verified,
-                         &record.DetailedScore.AvgSuccess, &record.DetailedScore.WorstSuccess,
-                         &record.DetailedScore.FailureRatio)
+                         &record.DetailedScore.MedSuccess)
         if err != nil {
             return nil, err
         }
@@ -357,6 +423,7 @@ func HandleLeaderboard(w http.ResponseWriter, r *http.Request) {
     // Read the user records from the DB with valid scores
     userRecords, err := GetUserRecords(true, true)
     if err != nil {
+        log.Println(err.Error())
         http.ServeFile(w, r, "static/index.html")
     }
     // Sort the userRecords in increasing order of score
@@ -554,8 +621,6 @@ func HandleRegistration(w http.ResponseWriter, r *http.Request){
         return
     }
 
-    log.Println("User details: ", userEmail, userPassword, userName, userId)
-
     var user UserRecord
     user.Email = userEmail
     user.Password, user.Salt, _ = HashPassword(userPassword, 16)
@@ -732,18 +797,21 @@ func HandleRun(w http.ResponseWriter, r *http.Request) {
 
     run_result, score, result := RunSolution(session.Values["userid"].(string))
     if result == -1 { // Run was interrupted by a signal
-        run_result = "Did not finish correctly"
+        run_result = "Did not finish correctly: "+run_result
     }else{
-        run_result = "Score (avg success, worst success, failures): "+run_result
+	    run_result = "Score: "+run_result+" "+session.Values["email"].(string)
         log.Println(run_result, score)
     }
 
     // If the score is an improvement, update it
-    crt_score := session.Values["score"].(float32)
+    crt_detailed_score, _ := GetScore(session.Values["userid"].(string))
+    crt_score := CalculateScore(crt_detailed_score)
     new_score := CalculateScore(score)
-    if new_score > 0 && (new_score < crt_score || crt_score < 0) {
+    log.Printf("New: %0.2f Current: %0.2f", new_score, crt_score)
+    if new_score > 0 && (new_score < crt_score || crt_score <= 0) {
         err := UpdateScore(session.Values["userid"].(string), score)
         if err != nil {
+		log.Println("HandleRun: " + err.Error())
             data := map[string]interface{}{
                 "Message": "Error updating score in DB. Contact admin victor[dot]cionca[at]mtu[dot]ie",
                 "Error": err.Error(),
@@ -773,9 +841,25 @@ func UpdateScores() {
     }
 
     for _, user := range userRecords {
+        // Copy source files to the user folder
+        log.Printf("Copying source files for %s", user.Name)
+        err = CopySourcesToUserFolder(user.Id)
+        if err != nil {
+            log.Printf("Error updating sources for %s(%s)", user.Name, user.Id)
+            continue
+        }
+        // Compile solution
+        log.Printf("Compiling source files for %s", user.Name)
+        _, err = TryCompile(user.Id)
+        if err != nil {
+            log.Printf("Error compiling sources for %s(%s)", user.Name, user.Id)
+            continue
+        } 
+        // Run solution
+        log.Printf("Running source files for %s", user.Name)
         _, newscore, result := RunSolution(user.Id)
         if result >= 0 {
-            log.Printf("Updating score of %s to %v", user.Name, newscore)
+            log.Printf("Updating score of %s(%s) to %v", user.Name, user.Id, newscore)
             err = UpdateScore(user.Id, newscore)
             if err != nil {
                 log.Println("Did not work:"+err.Error())
