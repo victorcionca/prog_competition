@@ -1,8 +1,33 @@
-# C issues to cover
+# Setup
 
-* Detect segmentation fault at runtime
-* Infinite loops
-* Additional libraries
+* configure static html files in ``static``, modifying to match the subject of the
+competition
+    * name of the competition in ``index.html``
+    * details of score in ``leaderboard.html``
+    * details of evaluation in ``submit.html``
+
+* configure in ``competition.go`` the details of the competition
+    * names of source files
+    * compile command
+    * processing of solution output
+    * database details
+
+* setup the database; update the schema to fit the solution score
+
+```
+> sqlite3 userdb.db
+> drop table users;
+> .read userdb_schema.sql
+```
+
+* the server works with Postmark API to send registration and verification emails
+    * ``https://github.com/mattevans/postmark-go``
+
+# Running
+
+``go run competition.go``
+
+The server will be running on port 8080.
 
 # Website structure
 
