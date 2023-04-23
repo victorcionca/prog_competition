@@ -3,9 +3,16 @@
     <body>
         <h2>Current best score: {{ .Score }}</h2><br>
         <h2>Submit and test solution</h2><br>
-        Before submitting make sure that your solution runs correctly with the performance_eval function.<br><br>
+        Before submitting make sure that your solution runs correctly.<br>
+        Your solution will be evaluated by running it 5 times with different random
+        seeds.<br>
+        If in a run the solution stalls for more than 5 seconds it will be stopped,
+        and the score will be the one reached at that point.
+        <br>
+        <br>
+        <br>
         <form action="/upload" method="POST" enctype="multipart/form-data">
-            Upload solution file (gradient_sol.c)
+            Upload solution file (move_ship.c)
             <input type="file" name="solution">
             <input type="submit" value="Upload">
         </form>
@@ -17,7 +24,11 @@
         <form action="/run" method="POST">
             Run existing solution <input type="submit" value="Run">
         </form>
-        <br>
+         Running the solution will take some time. Please wait until it completes
+         and do not refresh the window or press the "back" button.
+         <br>
+         <br>
+         <br>
         <a href="/static/dashboard.html">Back to dashboard</a>
     </body>
 </html>
