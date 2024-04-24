@@ -28,6 +28,10 @@ competition
 * the server works with Postmark API to send registration and verification emails
     * ``https://github.com/mrz1836/postmark``
 
+* include the sandboxing sources from the sources folder into the main competition
+program
+    * ``config_seccomp.*`` and ``__wrap_printf.c``
+
 # Running
 
 * export the POSTMARK server and account tokens
