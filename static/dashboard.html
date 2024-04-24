@@ -1,9 +1,21 @@
 <html>
-    <head>Welcome {{ .Username }}</head>
+    <head>
+        <title>Space explorer - dashboard</title>
+        <link rel="stylesheet" href="/static/css/normalize.css">
+        <link rel="stylesheet" href="/static/css/skeleton.css">
+    </head>
     <body>
-        <h2>Current best score: {{ .Score }}</h2><br>
-        <a href="/static/submit.html">Submit solution</a>
-        <a href="/leaderboard">Leaderboard</a>
-        <a href="/logout">Logout</a>
+        <div class="row">
+            <div class="one-half column">
+                <h1>Welcome {{ .Username }}</h1>
+                <h2>Current best score: {{ .Score }}</h2><br>
+                <a href="/static/submit.html">Submit solution</a>
+                <a href="/leaderboard">Leaderboard</a>
+                <a href="/logout">Logout</a>
+            </div>
+            <div class="one-half column">
+                <img src="/static/images/cockpit.png" title="Generated with DALL-E 2">
+            </div>
+        </div>
     </body>
 </html>

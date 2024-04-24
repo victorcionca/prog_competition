@@ -7,10 +7,15 @@ competition
     * details of evaluation in ``submit.html``
 
 * configure in ``competition.go`` the details of the competition
-    * names of source files
-    * compile command
-    * processing of solution output
+    * names of source files (getCompetitionFilenames)
+    * compile command (getCompiledCommand)
+    * processing of solution output (RunSolutionSpecific and processSolutionOutput)
     * database details
+    * displaying the leaderboard - HandleLeaderboard increasing vs decreasing
+    sorting of users based on score
+* configure in ``competition.go``
+    * the web address
+    * the template for email verification
 
 * setup the database; update the schema to fit the solution score
 
@@ -21,11 +26,12 @@ competition
 ```
 
 * the server works with Postmark API to send registration and verification emails
-    * ``https://github.com/mattevans/postmark-go``
+    * ``https://github.com/mrz1836/postmark``
 
 # Running
 
-``go run competition.go``
+* export the POSTMARK server and account tokens
+* ``go run competition.go``
 
 The server will be running on port 8080.
 

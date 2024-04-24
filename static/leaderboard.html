@@ -1,9 +1,17 @@
 <html>
+    <head>
+        <title>Space explorer - leaderboard</title>
+        <link rel="stylesheet" href="/static/css/normalize.css">
+        <link rel="stylesheet" href="/static/css/skeleton.css">
+    </head>
     <body>
         <h1>Leaderboard</h1>
         <br>
-        Score reported is median out of 10 runs with different seeds.<br>
-        Difficulty (new asteroid probability) increases +5 with every 10000 steps.<br>
+        Score reported is average of first 1000 seeds, excluding the list of known
+        seeds where there is no path between the start and end.
+        <br>
+        Failure to find the target is scored at 999 for the respective seed.
+        <br>
         <table>
             <tr>
                 <td style="background-color:#dddddd">Index</td>

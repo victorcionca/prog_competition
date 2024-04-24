@@ -1,6 +1,11 @@
 <html>
-    <head>Register user account</head>
+    <head>
+        <title>Space explorer - registration</title>
+        <link rel="stylesheet" href="/static/css/normalize.css">
+        <link rel="stylesheet" href="/static/css/skeleton.css">
+    </head>
     <body>
+        <h1>Register user account</h1>
         <form action="/register" method="POST">
             Email<br/><input type="text" name="email"><br/>
             Handle (username)<br/><input type="text" name="name"><br/>
@@ -8,7 +13,7 @@
             <hl>
             After submitting the details the account will need to be verified.<br>
             You will receive an email with details soon.<br>
-            <input type="submit" value="Register">
+            <input class="button-primary" type="submit" value="Register">
         </form>
         <br/>
     </body>

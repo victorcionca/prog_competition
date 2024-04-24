@@ -11,6 +11,7 @@ import (
     "strconv"
     "errors"
     "sort"
+    "context"
     "math/rand"
     "mime/multipart"
     "encoding/base64"
@@ -22,7 +23,7 @@ import (
     "database/sql"
     _ "github.com/mattn/go-sqlite3"
     "golang.org/x/crypto/bcrypt"
-    postmark "github.com/mattevans/postmark-go"
+    postmark "github.com/mrz1836/postmark"
 )
 
 // ----------------------------------------------------------------------------
@@ -36,16 +37,26 @@ const (
         To activate your account follow the link below:
         {{ .Link }}`
     user_folders = "user_folders"
-    user_sol_file = "move_ship.c"
-    competitionBinary = "asteroids"
+    user_sol_file = "space_solution.c"
+    competitionBinary = "space_explorer"
 )
 
 func getCompetitionFilenames() []string {
-    return []string{"asteroids.c", "asteroids.h"}
+    return []string{"space_explorer.c",
+                    "space_explorer.h",
+                    "__wrap_printf.c"}
 }
 
 func getCompiledCommand() *exec.Cmd {
-    return exec.Command("gcc", "asteroids.c", "move_ship.c", "-o", "asteroids")
+    return exec.Command("gcc",
+                        "space_explorer.c",
+                        "-fno-builtin-printf",
+                        "space_solution.c",
+                        "__wrap_printf.c",
+                        "-lm",
+                        "-Wl,--wrap=printf",
+                        "-o",
+                        "space_explorer")
 }
 
 
@@ -78,6 +89,7 @@ func processSolutionOutput(solOut []byte) (string,SolutionScore,int) {
     return outString,score,result
 }
 
+
 // Specific to the competition binary
 // Runs the solution and returns
 //  - a message that will be displayed to the user
@@ -85,17 +97,17 @@ func processSolutionOutput(solOut []byte) (string,SolutionScore,int) {
 //  - a result code, -1 indicates error.
 func RunSolutionSpecific() (string, SolutionScore, int) {
     // Specific for asteroids
-    // Run the binary 10 times with increasing seeds, average the scores
-    scores := make([]int, 10)
-    for i := 0; i < 10; i++ {
-        out, err := exec.Command("./"+competitionBinary, string(1234+i)).CombinedOutput()
-        //log.Println("Result: "+string(out))
+    // Run the binary for the 1000 first seeds, excluding the below, compute average
+    exclude_seeds := [...]int{21, 37, 54, 62, 68, 80, 85, 164, 254, 260, 287, 383, 536, 547, 565, 575, 582, 593, 627, 632, 646, 731, 742, 799, 892, 925, 945, 954, 968}
+    average_score := 0
+    for i := 0; i < 1000; i++ {
+        out, err := exec.Command("./"+competitionBinary, strconv.Itoa(i)).CombinedOutput()
         if err == nil {
             runOut,runScore,runResult := processSolutionOutput(out)
             if runResult == -1 {
                 return runOut, runScore, runResult
             }else{
-                scores[i] = runScore.MedSuccess
+                average_score += runScore.MedSuccess
             }
         }else{
             return "error: "+string(out), SolutionScore{MedSuccess:0}, -1
@@ -103,9 +115,8 @@ func RunSolutionSpecific() (string, SolutionScore, int) {
     }
 
     // Determine the median score
-    sort.Ints(scores)
     var solScore SolutionScore
-    solScore.MedSuccess = scores[5]
+    solScore.MedSuccess = average_score/(1000-len(exclude_seeds))
     return "success", solScore, 0
 }
 
@@ -222,6 +233,7 @@ func RunSolution(userid string) (string, SolutionScore, int) {
     }
 
     //  Run solution specific to competition
+    log.Println("Running in "+GetUserFolder(userid))
     solOut, score, result := RunSolutionSpecific()
     return solOut, score, result
 }
@@ -277,16 +289,18 @@ func SendVerificationMail(user UserRecord) error {
         return err
     }
     plainTextContent := buf.String()
-    emailReq := &postmark.Email{
+    emailReq := postmark.Email{
         From:       "victor.cionca@mtu.ie",
         To:         user.Email,
         Subject:    subject,
         TextBody:   plainTextContent,
     }
-    auth := &http.Client{Transport: &postmark.AuthTransport{
-                        Token: os.Getenv("POSTMARK_SERVER_API_TOKEN")}}
-    client := postmark.NewClient(auth)
-    _, _, err := client.Email.Send(emailReq)
+    //auth := &http.Client{Transport: &postmark.AuthTransport{
+    //                    Token: os.Getenv("POSTMARK_SERVER_API_TOKEN")}}
+    //client := postmark.NewClient(postmark.WithClient(auth))
+    client := postmark.NewClient(os.Getenv("POSTMARK_SERVER_API_TOKEN"),
+                                 os.Getenv("POSTMARK_ACCOUNT_TOKEN"))
+    _, err := client.SendEmail(context.Background(), emailReq)
     if err != nil {
         return err
     }
@@ -799,8 +813,8 @@ func HandleRun(w http.ResponseWriter, r *http.Request) {
     if result == -1 { // Run was interrupted by a signal
         run_result = "Did not finish correctly: "+run_result
     }else{
-	    run_result = "Score: "+run_result+" "+session.Values["email"].(string)
-        log.Println(run_result, score)
+	    run_result = fmt.Sprintf("Score: %0.2f ", CalculateScore(score))
+        log.Println(run_result, session.Values["email"])
     }
 
     // If the score is an improvement, update it
