@@ -6,11 +6,20 @@ competition
     * details of score in ``leaderboard.html``
     * details of evaluation in ``submit.html``
 
+* prepare the source files into the root of ``user_folders``
+    * copy the competition program sources
+    * copy the sandboxing sources from the ``sources`` folder
+    * modify the code to
+        * include ``config_seccomp.h``
+        * call ``configure_seccomp()`` before the game loop begins
+
 * configure in ``competition.go`` the details of the competition
     * names of source files (getCompetitionFilenames)
     * compile command (getCompiledCommand)
     * processing of solution output (RunSolutionSpecific and processSolutionOutput)
+    * updating the score in HandleRun, for increasing vs decreasing scores
     * database details
+        * data types and field names
     * displaying the leaderboard - HandleLeaderboard increasing vs decreasing
     sorting of users based on score
 * configure in ``competition.go``
@@ -28,9 +37,6 @@ competition
 * the server works with Postmark API to send registration and verification emails
     * ``https://github.com/mrz1836/postmark``
 
-* include the sandboxing sources from the sources folder into the main competition
-program
-    * ``config_seccomp.*`` and ``__wrap_printf.c``
 
 # Running
 
