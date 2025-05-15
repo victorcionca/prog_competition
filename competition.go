@@ -4,6 +4,7 @@ import (
     "fmt"
     "log"
     "io"
+    "bufio"
     "os"
     "os/exec"
     "bytes"
@@ -182,11 +183,74 @@ func CopySourcesToUserFolder(userid string) error {
     return nil
 }
 
+// Split into C tokens
+func SplitC(data []byte, atEOF bool) (int, []byte, error) {
+    if atEOF {
+        return 0, nil, nil
+    }
+
+    idx_par := bytes.IndexAny(data, "( \t\n\r,+-=*/%<>&|!")
+    if idx_par < 0 {
+        return 0, nil, nil
+    }else{
+        token := make([]byte, idx_par)
+        copy(token, data[:idx_par])
+        return idx_par+1, token, nil
+    }
+}
+
+// Check the uploaded file for illegal expressions,
+// such as printf, redefinition of important functions etc
+func CheckUpload(file multipart.File) error {
+    scanner := bufio.NewScanner(file)
+    scanner.Split(SplitC)
+    prev := ""
+    wrd := ""
+    for scanner.Scan() {
+        wrd = scanner.Text()
+        if strings.Compare(wrd, "printf") == 0 {
+            return errors.New("You are not allowed to use printf")
+        }
+        if strings.Compare(wrd, "fprintf") == 0 {
+            return errors.New("You are not allowed to use fprintf")
+        }
+        if strings.Compare(wrd, "puts") == 0 {
+            return errors.New("You are not allowed to use puts")
+        }
+        if strings.Compare(wrd, "fputs") == 0 {
+            return errors.New("You are not allowed to use fputs")
+        }
+        if strings.Compare(wrd, "write") == 0 {
+            return errors.New("You are not allowed to use write")
+        }
+        if len(prev) > 0 && strings.Compare(wrd, "random") == 0 && strings.Compare(prev, "int") == 0 {
+            return errors.New("Are you trying to redefine random?")
+        }
+        if len(prev) > 0 && strings.Compare(wrd, "srand") == 0 && strings.Compare(prev, "void") == 0 {
+            return errors.New("Are you trying to redefine srand?")
+        }
+        if len(wrd) > 1 {
+            prev = wrd
+        }
+    }
+    // Reset the file to start
+    file.Seek(0,0)
+
+    return nil
+}
+
+
+
 func UploadFile(file multipart.File, userid string) error {
     // Create user file
     dst, err := os.Create(GetUserSolutionFile(userid))
     defer dst.Close()
     if err != nil {
+        return err
+    }
+
+    // Check the uploaded file for forbidden functions etc
+    if err = CheckUpload(file); err != nil {
         return err
     }
 
