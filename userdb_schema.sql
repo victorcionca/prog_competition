@@ -4,6 +4,7 @@ create table users(
     password text,
     name text,
     id text,
-    score int,
+    container_id text,
+    score real,
     verified int,
     medsuccess int);
