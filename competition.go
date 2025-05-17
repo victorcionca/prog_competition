@@ -470,7 +470,8 @@ func GetUser(email string) (UserRecord, error) {
     var user UserRecord
     var tmp int
     user.Email = ""
-    getUserSQL := "SELECT * FROM users where email == ?"
+
+    getUserSQL := "SELECT email,salt,password,name,id,container_id,score,verified,medsuccess FROM users where email == ?"
     statement, err := userDb.Prepare(getUserSQL)
     if err != nil {
         return user, nil
@@ -489,8 +490,9 @@ func GetUser(email string) (UserRecord, error) {
 
 // Get all the user records from the DB
 func GetUserRecords(onlyValid bool, validScore bool) ([]UserRecord, error) {
-    rows, err := userDb.Query("SELECT * FROM users")
+    rows, err := userDb.Query("SELECT email,salt,password,name,id,container_id,score,verified,medsuccess FROM users")
     if err != nil {
+        log.Println("Error on first select")
         return nil, err
     }
     defer rows.Close()
