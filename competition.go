@@ -7,6 +7,7 @@ import (
     "bufio"
     "os"
     "os/exec"
+    "time"
     "bytes"
     "strings"
     "strconv"
@@ -61,31 +62,31 @@ const (
         To activate your account follow the link below:
         {{ .Link }}`
     user_folders = "user_folders"
-    user_sol_file = "space_solution.c"
-    competitionBinary = "space_explorer"
+    user_sol_file = "move_monkey.c"
+    competitionBinary = "hungry_monkey_static"
 )
 
 func getCompetitionFilenames() []string {
-    return []string{"space_explorer.c",
-                    "space_explorer.h",
-                    "__wrap_printf.c"}
+    return []string{"hungry_monkey_nogui.c",
+                    "hungry_monkey.h",
+                    "config_seccomp.c",
+                    "config_seccomp.h"}
 }
 
 func getCompiledCommand() *exec.Cmd {
     return exec.Command("gcc",
-                        "space_explorer.c",
-                        "-fno-builtin-printf",
-                        "space_solution.c",
-                        "__wrap_printf.c",
+                        "hungry_monkey_nogui.c",
+                        "move_monkey.c",
+                        "config_seccomp.c",
                         "-lm",
-                        "-Wl,--wrap=printf",
+                        "--static",
                         "-o",
-                        "space_explorer")
+                        competitionBinary)
 }
 
 
 type SolutionScore struct {
-    MedSuccess int
+    MedSuccess float32
 }
 
 func CalculateScore(score SolutionScore) float32 {
@@ -114,34 +115,32 @@ func processSolutionOutput(solOut []byte) (string,SolutionScore,int) {
 }
 
 
-// Specific to the competition binary
-// Runs the solution and returns
+// Runs the competition binary in its respective container
+// Returns
 //  - a message that will be displayed to the user
 //  - a score
 //  - a result code, -1 indicates error.
-func RunSolutionSpecific() (string, SolutionScore, int) {
-    // Specific for asteroids
-    // Run the binary for the 1000 first seeds, excluding the below, compute average
-    exclude_seeds := [...]int{21, 37, 54, 62, 68, 80, 85, 164, 254, 260, 287, 383, 536, 547, 565, 575, 582, 593, 627, 632, 646, 731, 742, 799, 892, 925, 945, 954, 968}
-    average_score := 0
-    for i := 0; i < 1000; i++ {
-        out, err := exec.Command("./"+competitionBinary, strconv.Itoa(i)).CombinedOutput()
-        if err == nil {
-            runOut,runScore,runResult := processSolutionOutput(out)
-            if runResult == -1 {
-                return runOut, runScore, runResult
-            }else{
-                average_score += runScore.MedSuccess
-            }
-        }else{
-            return "error: "+string(out), SolutionScore{MedSuccess:0}, -1
-        }
+func RunSolutionSpecific(containerid string) (string, SolutionScore, int) {
+    // Before starting the container, schedule its stop to prevent hangups
+    go func() {
+        time.Sleep(30*time.Second)
+        exec.Command("docker",
+                     "kill",
+                     containerid).Run()
+     }()
+
+    // Start the docker container
+    out, err := exec.Command("docker",
+                             "start",
+                             "-i",
+                             containerid).CombinedOutput()
+    if err == nil {
+        runOut,runScore,runResult := processSolutionOutput(out)
+        return runOut, runScore, runResult
+    }else{
+        return "error: "+string(out), SolutionScore{MedSuccess:0}, -1
     }
 
-    // Determine the median score
-    var solScore SolutionScore
-    solScore.MedSuccess = average_score/(1000-len(exclude_seeds))
-    return "success", solScore, 0
 }
 
 
@@ -308,21 +307,18 @@ func TryCompile(userid string) (string, error) {
 }
 
 // Runs a solution and returns a run message (e.g. SEGFAULT), obtained score
-func RunSolution(userid string) (string, SolutionScore, int) {
-    // Change directory into the users folder
-    wdir, _ := os.Getwd()
-    _ = os.Chdir(GetUserFolder(userid))
-    defer os.Chdir(wdir)
+func RunSolution(userid string, containerid string) (string, SolutionScore, int) {
+    user_folder := GetUserFolder(userid)
 
     // Check that binary exists
-    tmpwdir, _ := os.Getwd()
-    if _, err := os.Stat(tmpwdir + "/"+competitionBinary); errors.Is(err, os.ErrNotExist) {
+    wdir, _ := os.Getwd()
+    if _, err := os.Stat(wdir + "/"+user_folder+"/"+competitionBinary); errors.Is(err, os.ErrNotExist) {
         return "Solution hasn't been compiled yet!", SolutionScore{MedSuccess:0}, -1
     }
 
-    //  Run solution specific to competition
+    //  Run solution
     log.Println("Running in "+GetUserFolder(userid))
-    solOut, score, result := RunSolutionSpecific()
+    solOut, score, result := RunSolutionSpecific(containerid)
     return solOut, score, result
 }
 
@@ -504,7 +500,7 @@ func GetUserRecords(onlyValid bool, validScore bool) ([]UserRecord, error) {
         var record UserRecord
         var tmp int
         err := rows.Scan(&record.Email, &record.Salt, &record.Password, &record.Name,
-                         &record.Id, &tmp, &record.Verified,
+                         &record.Id, &record.ContainerId, &tmp, &record.Verified,
                          &record.DetailedScore.MedSuccess)
         if err != nil {
             return nil, err
@@ -936,7 +932,8 @@ func HandleRun(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    run_result, score, result := RunSolution(session.Values["userid"].(string))
+    run_result, score, result := RunSolution(session.Values["userid"].(string),
+                                             session.Values["containerId"].(string))
     if result == -1 { // Run was interrupted by a signal
         run_result = "Did not finish correctly: "+run_result
     }else{
@@ -998,7 +995,7 @@ func UpdateScores() {
         } 
         // Run solution
         log.Printf("Running source files for %s", user.Name)
-        _, newscore, result := RunSolution(user.Id)
+        _, newscore, result := RunSolution(user.Id, user.ContainerId)
         if result >= 0 {
             log.Printf("Updating score of %s(%s) to %v", user.Name, user.Id, newscore)
             err = UpdateScore(user.Id, newscore)
