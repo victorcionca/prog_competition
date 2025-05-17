@@ -28,6 +28,29 @@ import (
 )
 
 // ----------------------------------------------------------------------------
+// Containerisation
+func CreateUserContainer(user_id string) (string, error) {
+    // Get absolute path to the executable
+    root_path, _ := os.Getwd()
+    // Get the user folder
+    user_folder := GetUserFolder(user_id)
+    // Get the absolute path to the current folder
+    out, err := exec.Command("docker",
+                             "create",
+                             "-v", root_path+"/"+user_folder+":/mnt",
+                             "-u", "1001",
+                             "--entrypoint=/mnt/hungry_monkey_static",
+                             "alpine:latest").CombinedOutput()
+    container_id := ""
+    if err == nil {
+        // Get the docker container ID and store for the user
+        container_id = strings.TrimSpace(string(out))
+    }
+
+    return container_id,err
+}
+
+// ----------------------------------------------------------------------------
 // The following should be configured for the competition details
 const (
     userDbFile = "userdb.db"
@@ -133,6 +156,7 @@ type UserRecord struct {
     Password string
     Name string
     Id string
+    ContainerId string
     DetailedScore SolutionScore
     Score float32
     Verified int
@@ -377,12 +401,22 @@ func SendVerificationMail(user UserRecord) error {
 // TODO: modify DB info for user score
 
 func AddUser(user UserRecord) error {
-    addUserSQL := "INSERT INTO users(email, salt, password, name, id, score, verified, medsuccess) VALUES (?, ?, ?, ?, ?, ?, 0, ?)"
+    addUserSQL := "INSERT INTO users(email, salt, password, name, id, container_id, score, verified, medsuccess) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)"
     statement, err := userDb.Prepare(addUserSQL)
     if err != nil {
         return err
     }
-    _, err = statement.Exec(user.Email, user.Salt, user.Password, user.Name, user.Id, -1, -1)
+    _, err = statement.Exec(user.Email, user.Salt, user.Password, user.Name, user.Id, "", -1, -1)
+    return err
+}
+
+func SetContainerId(userid string, containerId string) error {
+    setContainerSQL := "UPDATE users SET container_id =? WHERE id = ?";
+    statement, err := userDb.Prepare(setContainerSQL)
+    if err != nil {
+        return err
+    }
+    _, err = statement.Exec(containerId, userid)
     return err
 }
 
@@ -447,7 +481,7 @@ func GetUser(email string) (UserRecord, error) {
     }
     row := statement.QueryRow(email)
     err = row.Scan(&user.Email, &user.Salt, &user.Password, &user.Name, &user.Id,
-                   &tmp, &user.Verified, &user.DetailedScore.MedSuccess)
+                    &user.ContainerId, &tmp, &user.Verified, &user.DetailedScore.MedSuccess)
     if err != nil {
         return user, err
     }else{
@@ -591,6 +625,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request){
     session.Values["userid"] = userRecord.Id
     session.Values["username"] = userRecord.Name
     session.Values["email"] = userRecord.Email
+    session.Values["containerId"] = userRecord.ContainerId
     session.Values["score"] = userRecord.Score
     err = session.Save(r, w)
     if err != nil {
@@ -620,7 +655,46 @@ func HandleVerification(w http.ResponseWriter, r *http.Request){
 
     // TODO: search for user first
 
-    err := ValidateUser(vars["user_id"])
+    // Create a folder for the user
+    err := PrepareUserFolder(vars["user_id"])
+    if err != nil {
+        data := map[string]interface{}{
+            "Message": "Error preparing user folders. Contact admin victor[dot]cionca[at]mtu[dot]ie",
+            "Error": err.Error(),
+            "Link": "/",
+        }
+        errTemplate.Execute(w, data)
+        return
+    }
+
+    // Create user container
+    containerId := ""
+    containerId, err = CreateUserContainer(vars["user_id"])
+    if err != nil {
+        data := map[string]interface{}{
+            "Message": "Error creating user container. Contact admin victor[dot]cionca[at]mtu[dot]ie",
+            "Error": err.Error(),
+            "Link": "/",
+        }
+        errTemplate.Execute(w, data)
+        return
+    }
+
+    // Update user record with container id
+    err = SetContainerId(vars["user_id"], containerId)
+    if err != nil {
+        log.Println("Could not set containerId for the user")
+        data := map[string]interface{}{
+            "Message": "Failed to set container id. Contact admin victor[dot]cionca[at]mtu[dot]ie",
+            "Link": "/",
+        }
+        errTemplate.Execute(w, data)
+        return
+    }
+
+
+    // Finally mark this user as valid
+    err = ValidateUser(vars["user_id"])
     if err != nil {
         log.Println("Could not validate the user")
         data := map[string]interface{}{
@@ -631,17 +705,6 @@ func HandleVerification(w http.ResponseWriter, r *http.Request){
         return
     }
 
-    // Create a folder for the user
-    err = PrepareUserFolder(vars["user_id"])
-    if err != nil {
-        data := map[string]interface{}{
-            "Message": "Error preparing user folders. Contact admin victor[dot]cionca[at]mtu[dot]ie",
-            "Error": err.Error(),
-            "Link": "/",
-        }
-        errTemplate.Execute(w, data)
-        return
-    }
 
     data := map[string]interface{}{
         "Message": "User is activated. You can now login through main page.",
