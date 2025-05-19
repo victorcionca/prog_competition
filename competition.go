@@ -1008,6 +1008,42 @@ func UpdateScores() {
     }
 }
 
+// Called if we want to generate containers for all the users at once
+func GenerateContainers() {
+    // Read the user records from the DB
+    userRecords, err := GetUserRecords(true, false)
+    if err != nil {
+        log.Fatal("Error retrieving user records: "+err.Error())
+    }
+
+    for _, user := range userRecords {
+        // Ignore non-validated users
+        if user.Verified == 0 {
+            continue
+        }
+
+        log.Printf("Creating container for %s: ", user.Email)
+        // Create user container
+        containerId := ""
+        containerId, err = CreateUserContainer(user.Id)
+        if err != nil {
+            log.Printf("FAIL.\nError creating user container: %s. Skipping.\n",err.Error())
+            continue;
+        }
+        log.Printf("SUCCESS: %s\n", containerId)
+
+        // Update user record with container id
+        log.Printf("Set container ID.");
+        err = SetContainerId(user.Id, containerId)
+        if err != nil {
+            log.Printf("FAIL: %s\n", err.Error())
+            continue;
+        }
+        log.Printf("SUCCESS\n")
+    }
+}
+
+
 func main(){
     // Initialise PRNG
     rand.Seed(1) // TODO use time.Now().UnixNano() as seed
@@ -1020,10 +1056,17 @@ func main(){
     }
 
     cmdArgs := os.Args
-    if len(cmdArgs) > 1 && cmdArgs[1] == "update"{
-        log.Println("Update DB")
-        UpdateScores()
-        return
+    if len(cmdArgs) > 1 {
+        if cmdArgs[1] == "update" {
+            log.Println("Update DB")
+            UpdateScores()
+            return
+        }
+        if cmdArgs[1] == "containers" {
+            log.Println("Creating containers")
+            GenerateContainers()
+            return
+        }
     }
 
     log.Println("Starting server")
